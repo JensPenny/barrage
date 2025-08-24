@@ -1,10 +1,9 @@
-use std::{error::Error, process, thread::sleep, time::Duration};
-
-use barrage::match_lines;
+use std::{error::Error, process};
 
 use clap::{Parser, Subcommand};
-use log::{info, warn};
-use serde_derive::{Serialize, Deserialize};
+use colored::Colorize;
+use log::{error, info, warn};
+use serde_derive::{Deserialize, Serialize};
 // Alias for boxed dynamic errors
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -19,80 +18,68 @@ enum ConnectionType {
 #[command(version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands
+    command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Manage the barrage configuration
-    Config{ 
+    Config {
         #[command(subcommand)]
         action: ConfigCommands,
     },
     /// Test the current connection configurations
-    TestConnection{
+    TestConnection {
         #[arg(short, long)]
-        host: Option<String>, 
+        host: Option<String>,
         #[arg(short, long)]
         port: Option<u16>,
     },
     /// Send the messages
-    Send
-    // Todo add possible overrides for the send command
+    Send, // Todo add possible overrides for the send command
 }
 
 // Todo choose between set or explicit-set
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommands {
     /// Pretty print the current configuration
-    Show, 
+    Show,
     /// Set one or more configuration parameters
-    Set {
-        /// kv-pairs of the settings. For example: host=127.0.0.1
-        #[arg(value_parser = parse_key_val::<String, String>)]
-        pairs: Vec<(String, String)>,
-    },
+    // Set {
+    //     /// kv-pairs of the settings. For example: host=127.0.0.1
+    //     #[arg(value_parser = parse_key_val::<String, String>)]
+    //     pairs: Vec<(String, String)>,
+    // },
     /// Set a config parameter explicitly
-    SetE {
-        #[arg(long)] host: Option<String>, 
-        #[arg(long)] port: Option<u16>, 
-        #[arg(long, value_enum)] connection_type: Option<ConnectionType>, 
-        #[arg(long)] payload_path: Option<std::path::PathBuf>,
-    }
-}
-
-// Clap docs: https://docs.rs/crate/clap/latest/source/examples/typed-derive.rs
-/// Parse a single key-value pair
-fn parse_key_val<T, U>(s: &str) -> std::result::Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
-where
-    T: std::str::FromStr,
-    T::Err: Error + Send + Sync + 'static,
-    U: std::str::FromStr,
-    U::Err: Error + Send + Sync + 'static,
-{
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{s}`"))?;
-    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
+    Set {
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long, value_enum)]
+        connection_type: Option<ConnectionType>,
+        #[arg(long)]
+        payload_path: Option<std::path::PathBuf>,
+    },
 }
 
 // Configuration class
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
-    host: String, 
+    host: String,
     port: u16,
-    connection_type: ConnectionType, 
+    connection_type: ConnectionType,
     payload_path: std::path::PathBuf,
 }
 
 // Default configuration
 impl ::std::default::Default for Config {
     fn default() -> Self {
-        Self { 
-            host: "localhost".into(), 
+        Self {
+            host: "localhost".into(),
             port: 20_000,
-            connection_type: ConnectionType::TcpMllpClient, 
-            payload_path: "/payload".into(),
+            connection_type: ConnectionType::TcpMllpClient,
+            payload_path: "payload/".into(),
         }
     }
 }
@@ -103,66 +90,134 @@ fn main() -> Result<()> {
     set_ctrlc_handler();
 
     let cli = Cli::parse();
+    let mut cfg: Config = confy::load_path("barrage.conf").unwrap_or_else(|e| {
+        error!("Error loading config: {}", e);
+        Config::default()
+    });
+
+    info!("Loaded config: {:#?}", cfg);
 
     match cli.command {
         Commands::Config { action } => match action {
-            ConfigCommands::Show => todo!(),
-            ConfigCommands::Set { pairs } => {
-                for (key, value) in pairs {
-                    match key.as_str() {
-                        "host" => info!("config set host: {}", value),
-                        "port" => info!("Config set port: {}", value),
-                        "connection_type" => info!("Config set connection_type: {}", value),
-                        "payload_path" => info!("Config set payload_path: {}", value),
-                        _ => return Err(format!("Unknown config key: {}", key).into()),
+            ConfigCommands::Show => {
+                println!("{}", "╭─────────────────────────────────────╮".cyan());
+                println!("{}", "│          Barrage Configuration      │".cyan());
+                println!("{}", "╰─────────────────────────────────────╯".cyan());
+                println!();
+
+                println!("{}", "📡 Connection Settings:".bright_blue().bold());
+                println!("   {:<15} {}", "Host:".green(), cfg.host.yellow());
+                println!(
+                    "   {:<15} {}",
+                    "Port:".green(),
+                    cfg.port.to_string().yellow()
+                );
+                println!(
+                    "   {:<15} {}",
+                    "Connection Type:".green(),
+                    format!("{:?}", cfg.connection_type).yellow()
+                );
+                println!();
+
+                println!("{}", "📁 File Settings:".bright_blue().bold());
+                println!(
+                    "   {:<15} {}",
+                    "Payload Path:".green(),
+                    cfg.payload_path.display().to_string().yellow()
+                );
+                println!();
+
+                // Show config file location and status
+                let config_path = std::path::Path::new("barrage.conf");
+                println!("{}", "⚙️  Configuration:".bright_blue().bold());
+
+                if config_path.exists() {
+                    println!(
+                        "   {:<15} {} {}",
+                        "File:".green(),
+                        config_path.display().to_string().yellow(),
+                        "✓".bright_green()
+                    );
+
+                    if let Ok(metadata) = config_path.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            let datetime = modified
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            println!(
+                                "   {:<15} {}",
+                                "Last Modified:".green(),
+                                format!(
+                                    "{} seconds ago",
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_secs()
+                                        - datetime
+                                )
+                                .bright_black()
+                            );
+                        }
+
+                        let size = metadata.len();
+                        println!(
+                            "   {:<15} {} bytes",
+                            "Size:".green(),
+                            size.to_string().bright_black()
+                        );
                     }
+                } else {
+                    println!(
+                        "   {:<15} {} {}",
+                        "File:".green(),
+                        config_path.display().to_string().yellow(),
+                        "(using defaults)".bright_black()
+                    );
+                    println!(
+                        "   {:<15} {}",
+                        "Status:".green(),
+                        "No config file found".red()
+                    );
                 }
-            },
+                println!();
+
+                // Add a helpful tip
+                println!("{}", "💡 Tip: Use 'barrage config set --help' to see available configuration options".bright_black());
+            }
+            ConfigCommands::Set {
+                host,
+                port,
+                connection_type,
+                payload_path,
+            } => {
+                if let Some(host) = host {
+                    cfg.host = host;
+                }
+                if let Some(port) = port {
+                    cfg.port = port
+                };
+                if let Some(connection_type) = connection_type {
+                    cfg.connection_type = connection_type
+                };
+                if let Some(payload_path) = payload_path {
+                    cfg.payload_path = payload_path
+                };
+
+                confy::store_path("barrage.conf", &cfg)?;
+                info!("Config updates saved: {:#?}", cfg);
+            }
         },
         Commands::TestConnection { host, port } => todo!(),
         Commands::Send => todo!(),
     }
-    // let mut is_running = false;
-    // let cfg: Config = confy::load("barrage", None)?;
-    // info!("used config: {:#?}", cfg);
-
-
-    // let args = Cli::parse();
-    // println!("pattern: {:?}, path: {:?}", &args.pattern, &args.path);
-    // let result = std::fs::read_to_string(&args.path);
-    // let content = match result {
-    //     Ok(content) => content,
-    //     Err(error) => {
-    //         return Err(error.into());
-    //     }
-    // };
-
-    // // if is_running {
-    //     match_lines(&content, &args.pattern, &mut std::io::stdout());
-    //     info!("showing progress bar");
-    //     warn!("really showing progress bar");
-    //     show_progress_bar();
-    // }
     return Ok(());
-    // todo use bufreader to see if we should load the messages that we want to send into memory
-
-    // todo create a sender, then create
 }
 
 fn set_ctrlc_handler() {
     ctrlc::set_handler(move || {
         println!("received Ctrl+C!");
-        // is_running = false;
         process::exit(1); // Exit on ctrl+c. Todo - see later if we should gracefully exit on first ctrl c
     })
     .expect("Error setting Ctrl-C handler");
-}
-
-fn show_progress_bar() {
-    let pb = indicatif::ProgressBar::new(100);
-    for _i in 0..100 {
-        sleep(Duration::new(0, 200_000_000));
-        pb.inc(1);
-    }
-    pb.finish_with_message("done");
 }

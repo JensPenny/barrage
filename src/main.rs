@@ -99,92 +99,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Config { action } => match action {
-            ConfigCommands::Show => {
-                println!("{}", "╭─────────────────────────────────────╮".cyan());
-                println!("{}", "│          Barrage Configuration      │".cyan());
-                println!("{}", "╰─────────────────────────────────────╯".cyan());
-                println!();
-
-                println!("{}", "📡 Connection Settings:".bright_blue().bold());
-                println!("   {:<15} {}", "Host:".green(), cfg.host.yellow());
-                println!(
-                    "   {:<15} {}",
-                    "Port:".green(),
-                    cfg.port.to_string().yellow()
-                );
-                println!(
-                    "   {:<15} {}",
-                    "Connection Type:".green(),
-                    format!("{:?}", cfg.connection_type).yellow()
-                );
-                println!();
-
-                println!("{}", "📁 File Settings:".bright_blue().bold());
-                println!(
-                    "   {:<15} {}",
-                    "Payload Path:".green(),
-                    cfg.payload_path.display().to_string().yellow()
-                );
-                println!();
-
-                // Show config file location and status
-                let config_path = std::path::Path::new("barrage.conf");
-                println!("{}", "⚙️  Configuration:".bright_blue().bold());
-
-                if config_path.exists() {
-                    println!(
-                        "   {:<15} {} {}",
-                        "File:".green(),
-                        config_path.display().to_string().yellow(),
-                        "✓".bright_green()
-                    );
-
-                    if let Ok(metadata) = config_path.metadata() {
-                        if let Ok(modified) = metadata.modified() {
-                            let datetime = modified
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
-                            println!(
-                                "   {:<15} {}",
-                                "Last Modified:".green(),
-                                format!(
-                                    "{} seconds ago",
-                                    std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap()
-                                        .as_secs()
-                                        - datetime
-                                )
-                                .bright_black()
-                            );
-                        }
-
-                        let size = metadata.len();
-                        println!(
-                            "   {:<15} {} bytes",
-                            "Size:".green(),
-                            size.to_string().bright_black()
-                        );
-                    }
-                } else {
-                    println!(
-                        "   {:<15} {} {}",
-                        "File:".green(),
-                        config_path.display().to_string().yellow(),
-                        "(using defaults)".bright_black()
-                    );
-                    println!(
-                        "   {:<15} {}",
-                        "Status:".green(),
-                        "No config file found".red()
-                    );
-                }
-                println!();
-
-                // Add a helpful tip
-                println!("{}", "💡 Tip: Use 'barrage config set --help' to see available configuration options".bright_black());
-            }
+            ConfigCommands::Show => show_config(cfg),
             ConfigCommands::Set {
                 host,
                 port,
@@ -212,6 +127,97 @@ fn main() -> Result<()> {
         Commands::Send => todo!(),
     }
     return Ok(());
+}
+
+fn show_config(cfg: Config) {
+    println!("{}", "╭─────────────────────────────────────╮".cyan());
+    println!("{}", "│          Barrage Configuration      │".cyan());
+    println!("{}", "╰─────────────────────────────────────╯".cyan());
+    println!();
+
+    println!("{}", "📡 Connection Settings:".bright_blue().bold());
+    println!("   {:<15} {}", "Host:".green(), cfg.host.yellow());
+    println!(
+        "   {:<15} {}",
+        "Port:".green(),
+        cfg.port.to_string().yellow()
+    );
+    println!(
+        "   {:<15} {}",
+        "Connection Type:".green(),
+        format!("{:?}", cfg.connection_type).yellow()
+    );
+    println!();
+
+    println!("{}", "📁 File Settings:".bright_blue().bold());
+    println!(
+        "   {:<15} {}",
+        "Payload Path:".green(),
+        cfg.payload_path.display().to_string().yellow()
+    );
+    println!();
+
+    // Show config file location and status
+    let config_path = std::path::Path::new("barrage.conf");
+    println!("{}", "⚙️  Configuration:".bright_blue().bold());
+
+    if config_path.exists() {
+        println!(
+            "   {:<15} {} {}",
+            "File:".green(),
+            config_path.display().to_string().yellow(),
+            "✓".bright_green()
+        );
+
+        if let Ok(metadata) = config_path.metadata() {
+            if let Ok(modified) = metadata.modified() {
+                let datetime = modified
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                println!(
+                    "   {:<15} {}",
+                    "Last Modified:".green(),
+                    format!(
+                        "{} seconds ago",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            - datetime
+                    )
+                    .bright_black()
+                );
+            }
+
+            let size = metadata.len();
+            println!(
+                "   {:<15} {} bytes",
+                "Size:".green(),
+                size.to_string().bright_black()
+            );
+        }
+    } else {
+        println!(
+            "   {:<15} {} {}",
+            "File:".green(),
+            config_path.display().to_string().yellow(),
+            "(using defaults)".bright_black()
+        );
+        println!(
+            "   {:<15} {}",
+            "Status:".green(),
+            "No config file found".red()
+        );
+    }
+    println!();
+
+    // Add a helpful tip
+    println!(
+        "{}",
+        "💡 Tip: Use 'barrage config set --help' to see available configuration options"
+            .bright_black()
+    );
 }
 
 fn set_ctrlc_handler() {

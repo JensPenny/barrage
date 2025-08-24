@@ -1,4 +1,4 @@
-use std::{error::Error, process};
+use std::{error::Error, fs, process};
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -124,11 +124,59 @@ fn main() -> Result<()> {
             }
         },
         Commands::TestConnection { host, port } => todo!(),
-        Commands::Send => todo!(),
+        Commands::Send => send_messages(cfg),
     }
     return Ok(());
 }
 
+fn send_messages(cfg: Config) { 
+    // 1. List the paths in the payload directory
+    let payloads = cfg.payload_path.read_dir();
+    let paths = match payloads {
+        Ok(paths) => {paths}, 
+        Err(err) => {
+            error!("Could not find directory path for messages. Aborting. {}", err);
+            return;
+        },
+    };
+
+    let mut file_contents: Vec<String> = Vec::new();
+
+    // Iterate over the paths and load them in memory
+    for path_result in paths {
+        let path = match path_result {
+            Ok(p) => p, 
+            Err(e) => {
+                // ignore filepath errors
+                warn!("Could not process path. Error {}", e);
+                continue;
+            }
+        };   
+        
+        // Todo collect or map the paths, then sort by filename
+        //     let mut entries: Vec<_> = fs::read_dir("payloads")?
+        //     .filter_map(Result::ok) // discard errors
+        //     .collect();
+
+        // // Sort alphabetically by filename
+        // entries.sort_by_key(|dir| dir.path());
+
+        let payload_content = match fs::read_to_string(path.path()) {
+            Ok(c) => { c }, 
+            Err(e) => {
+                // ignore if we can't load a single file
+                warn!("Could not read fle at path {}. Error {}", path.path().display(), e);
+                continue;
+            }
+        };
+        file_contents.push(payload_content);
+    }
+
+    for content in file_contents {
+        info!("Found content {}", content);
+    }
+
+}
 fn show_config(cfg: Config) {
     println!("{}", "╭─────────────────────────────────────╮".cyan());
     println!("{}", "│          Barrage Configuration      │".cyan());

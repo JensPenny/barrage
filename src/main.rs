@@ -1,9 +1,13 @@
-use std::{error::Error, fs, process};
+use std::{fs, io::{ErrorKind, Write}, process};
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use futures::{SinkExt, StreamExt};
+use hl7_mllp_codec::MllpCodec;
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
+use tokio::net::TcpStream;
+use tokio_util::{bytes::BytesMut, codec::Framed};
 // Alias for boxed dynamic errors
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -30,9 +34,9 @@ enum Commands {
     },
     /// Test the current connection configurations
     TestConnection {
-        #[arg(short, long)]
+        #[arg(long)]
         host: Option<String>,
-        #[arg(short, long)]
+        #[arg(long)]
         port: Option<u16>,
     },
     /// Send the messages
@@ -84,7 +88,8 @@ impl ::std::default::Default for Config {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
     env_logger::init();
 
     set_ctrlc_handler();
@@ -123,21 +128,50 @@ fn main() -> Result<()> {
                 info!("Config updates saved: {:#?}", cfg);
             }
         },
-        Commands::TestConnection { host, port } => todo!(),
+        Commands::TestConnection { host, port } => {
+            match test_connection(host.unwrap_or(cfg.host), port.unwrap_or(cfg.port)).await {
+                Ok(_) => println!("{}", "Connection succeeded!".green()), 
+                Err(e) => println!("{}", format!("Could not connect: {:?}", e).red()),
+            }
+        },
         Commands::Send => send_messages(cfg),
     }
     return Ok(());
 }
 
-fn send_messages(cfg: Config) { 
+async fn test_connection(host: String, port: u16) -> Result<()> {
+    let stream = TcpStream::connect(format!("{}:{}", host, port)).await?;
+    let mut transport = Framed::new(stream, MllpCodec::new());
+    transport
+        .send(BytesMut::from(
+            "MSH|^~\\&|WIR|||36|20200514123930||VXU^V04^VXU_V04|43|P|2.5.1|||ER",
+        ))
+        .await?;
+
+        match transport.next().await {
+            Some(Ok(_msg)) => Ok(()),
+            Some(Err(e)) => Err(e.into()),
+            None => Err(std::io::Error::new(ErrorKind::TimedOut, "No response from remote host").into()),
+        }
+}
+
+// Sends an mllp framed message. This looks to be the actual thing to use here
+fn send_as_mllp(cfg: Config, msg: String) {
+    // https://docs.rs/hl7-mllp-codec/latest/hl7_mllp_codec/
+}
+
+fn send_messages(cfg: Config) {
     // 1. List the paths in the payload directory
     let payloads = cfg.payload_path.read_dir();
     let paths = match payloads {
-        Ok(paths) => {paths}, 
+        Ok(paths) => paths,
         Err(err) => {
-            error!("Could not find directory path for messages. Aborting. {}", err);
+            error!(
+                "Could not find directory path for messages. Aborting. {}",
+                err
+            );
             return;
-        },
+        }
     };
 
     let mut file_contents: Vec<String> = Vec::new();
@@ -145,14 +179,14 @@ fn send_messages(cfg: Config) {
     // Iterate over the paths and load them in memory
     for path_result in paths {
         let path = match path_result {
-            Ok(p) => p, 
+            Ok(p) => p,
             Err(e) => {
                 // ignore filepath errors
                 warn!("Could not process path. Error {}", e);
                 continue;
             }
-        };   
-        
+        };
+
         // Todo collect or map the paths, then sort by filename
         //     let mut entries: Vec<_> = fs::read_dir("payloads")?
         //     .filter_map(Result::ok) // discard errors
@@ -162,20 +196,25 @@ fn send_messages(cfg: Config) {
         // entries.sort_by_key(|dir| dir.path());
 
         let payload_content = match fs::read_to_string(path.path()) {
-            Ok(c) => { c }, 
+            Ok(c) => c,
             Err(e) => {
                 // ignore if we can't load a single file
-                warn!("Could not read fle at path {}. Error {}", path.path().display(), e);
+                warn!(
+                    "Could not read file at path {}. Error {}",
+                    path.path().display(),
+                    e
+                );
                 continue;
             }
         };
+        let formatted = format!("Loaded file at {}", path.path().display());
+        println!("{}", formatted.green());
         file_contents.push(payload_content);
     }
 
     for content in file_contents {
         info!("Found content {}", content);
     }
-
 }
 fn show_config(cfg: Config) {
     println!("{}", "╭─────────────────────────────────────╮".cyan());

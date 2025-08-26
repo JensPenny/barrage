@@ -1,13 +1,14 @@
-use std::{fs, io::{ErrorKind, Write}, process};
+use std::{fs, io::{ErrorKind, Write, stdout}, process};
 
 use clap::{Parser, Subcommand};
-use colored::Colorize;
 use futures::{SinkExt, StreamExt};
 use hl7_mllp_codec::MllpCodec;
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::{bytes::BytesMut, codec::Framed};
+use crossterm::{cursor, queue, style::{self, Stylize}, terminal, ExecutableCommand, QueueableCommand};
+
 // Alias for boxed dynamic errors
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -134,7 +135,7 @@ async fn main() -> Result<()> {
                 Err(e) => println!("{}", format!("Could not connect: {:?}", e).red()),
             }
         },
-        Commands::Send => send_messages(cfg),
+        Commands::Send => send_messages(cfg)?,
     }
     return Ok(());
 }
@@ -160,7 +161,28 @@ fn send_as_mllp(cfg: Config, msg: String) {
     // https://docs.rs/hl7-mllp-codec/latest/hl7_mllp_codec/
 }
 
-fn send_messages(cfg: Config) {
+/**
+ * Shows a stats panel in the CLI and updates it when the stats can change
+ */
+fn show_stats(_amount_passed: u16) -> Result<()>{
+    let mut stdout = stdout();
+    
+    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
+
+    for y in 0..40 {
+        for x in 0..150 {
+            if (y == 0 || y == 40-1) || (x == 0 || x == 150 - 1) {
+                stdout
+                    .queue(cursor::MoveTo(x,y))?
+                    .queue(style::PrintStyledContent( "█".dark_magenta()))?;
+            }
+        }
+    }
+    stdout.flush()?;
+    Ok(())
+}
+
+fn send_messages(cfg: Config) -> Result<()> {
     // 1. List the paths in the payload directory
     let payloads = cfg.payload_path.read_dir();
     let paths = match payloads {
@@ -170,7 +192,7 @@ fn send_messages(cfg: Config) {
                 "Could not find directory path for messages. Aborting. {}",
                 err
             );
-            return;
+            return Err(err.into());
         }
     };
 
@@ -215,14 +237,18 @@ fn send_messages(cfg: Config) {
     for content in file_contents {
         info!("Found content {}", content);
     }
+
+    return show_stats(10);
+
 }
+
 fn show_config(cfg: Config) {
     println!("{}", "╭─────────────────────────────────────╮".cyan());
     println!("{}", "│          Barrage Configuration      │".cyan());
     println!("{}", "╰─────────────────────────────────────╯".cyan());
     println!();
 
-    println!("{}", "📡 Connection Settings:".bright_blue().bold());
+    println!("{}", "📡 Connection Settings:".blue().bold());
     println!("   {:<15} {}", "Host:".green(), cfg.host.yellow());
     println!(
         "   {:<15} {}",
@@ -236,7 +262,7 @@ fn show_config(cfg: Config) {
     );
     println!();
 
-    println!("{}", "📁 File Settings:".bright_blue().bold());
+    println!("{}", "📁 File Settings:".blue().bold());
     println!(
         "   {:<15} {}",
         "Payload Path:".green(),
@@ -246,14 +272,14 @@ fn show_config(cfg: Config) {
 
     // Show config file location and status
     let config_path = std::path::Path::new("barrage.conf");
-    println!("{}", "⚙️  Configuration:".bright_blue().bold());
+    println!("{}", "⚙️  Configuration:".blue().bold());
 
     if config_path.exists() {
         println!(
             "   {:<15} {} {}",
             "File:".green(),
             config_path.display().to_string().yellow(),
-            "✓".bright_green()
+            "✓".green()
         );
 
         if let Ok(metadata) = config_path.metadata() {
@@ -273,7 +299,7 @@ fn show_config(cfg: Config) {
                             .as_secs()
                             - datetime
                     )
-                    .bright_black()
+                    .black()
                 );
             }
 
@@ -281,7 +307,7 @@ fn show_config(cfg: Config) {
             println!(
                 "   {:<15} {} bytes",
                 "Size:".green(),
-                size.to_string().bright_black()
+                size.to_string().black()
             );
         }
     } else {
@@ -289,7 +315,7 @@ fn show_config(cfg: Config) {
             "   {:<15} {} {}",
             "File:".green(),
             config_path.display().to_string().yellow(),
-            "(using defaults)".bright_black()
+            "(using defaults)".black()
         );
         println!(
             "   {:<15} {}",
@@ -303,7 +329,7 @@ fn show_config(cfg: Config) {
     println!(
         "{}",
         "💡 Tip: Use 'barrage config set --help' to see available configuration options"
-            .bright_black()
+            .black()
     );
 }
 

@@ -1,13 +1,22 @@
-use std::{fs, io::{ErrorKind, Write, stdout}, process};
+use std::{
+    fs,
+    io::{ErrorKind, Write, stdout},
+    process,
+    time::Instant,
+};
 
 use clap::{Parser, Subcommand};
+use crossterm::{
+    ExecutableCommand, QueueableCommand, cursor, queue,
+    style::{self, PrintStyledContent, Stylize},
+    terminal,
+};
 use futures::{SinkExt, StreamExt};
 use hl7_mllp_codec::MllpCodec;
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::{bytes::BytesMut, codec::Framed};
-use crossterm::{cursor, queue, style::{self, Stylize}, terminal, ExecutableCommand, QueueableCommand};
 
 // Alias for boxed dynamic errors
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -131,10 +140,10 @@ async fn main() -> Result<()> {
         },
         Commands::TestConnection { host, port } => {
             match test_connection(host.unwrap_or(cfg.host), port.unwrap_or(cfg.port)).await {
-                Ok(_) => println!("{}", "Connection succeeded!".green()), 
+                Ok(_) => println!("{}", "Connection succeeded!".green()),
                 Err(e) => println!("{}", format!("Could not connect: {:?}", e).red()),
             }
-        },
+        }
         Commands::Send => send_messages(cfg)?,
     }
     return Ok(());
@@ -149,11 +158,13 @@ async fn test_connection(host: String, port: u16) -> Result<()> {
         ))
         .await?;
 
-        match transport.next().await {
-            Some(Ok(_msg)) => Ok(()),
-            Some(Err(e)) => Err(e.into()),
-            None => Err(std::io::Error::new(ErrorKind::TimedOut, "No response from remote host").into()),
+    match transport.next().await {
+        Some(Ok(_msg)) => Ok(()),
+        Some(Err(e)) => Err(e.into()),
+        None => {
+            Err(std::io::Error::new(ErrorKind::TimedOut, "No response from remote host").into())
         }
+    }
 }
 
 // Sends an mllp framed message. This looks to be the actual thing to use here
@@ -161,26 +172,45 @@ fn send_as_mllp(cfg: Config, msg: String) {
     // https://docs.rs/hl7-mllp-codec/latest/hl7_mllp_codec/
 }
 
+#[derive(Debug, Clone)]
+struct Stats {
+    messages_sent: u32,
+    messages_failed: u32,
+    bytes_sent: u64,
+    start_time: std::time::Instant,
+    last_update: std::time::Instant,
+    connection_errors: u32,
+}
 /**
  * Shows a stats panel in the CLI and updates it when the stats can change
  */
-fn show_stats(_amount_passed: u16) -> Result<()>{
+fn show_stats(stats: Stats) -> Result<()> {
     let mut stdout = stdout();
-    
-    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
 
-    for y in 0..40 {
-        for x in 0..150 {
-            if (y == 0 || y == 40-1) || (x == 0 || x == 150 - 1) {
-                stdout
-                    .queue(cursor::MoveTo(x,y))?
-                    .queue(style::PrintStyledContent( "█".dark_magenta()))?;
-            }
-        }
-    }
+    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
+    stdout.execute(cursor::MoveTo(0, 0))?;
+
+    let mut y: i32 = 0;
+    stdout
+        .queue(style::PrintStyledContent("╭──────────────────────────╮".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│       Live stats         │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("├──────────────────────────┤".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Messages sent:           │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Messages failed:         │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Bytes sent:              │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Elapsed time:            │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Time remaining:          │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Message rate:            │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("╰──────────────────────────╯".cyan()))?.queue(cursor::MoveToNextLine(1))?;
+    
     stdout.flush()?;
+    let progressbar = indicatif::ProgressBar::new(100);
+    progressbar.inc(10);
+    progressbar.elapsed();
     Ok(())
 }
+
+fn update_stats() {}
 
 fn send_messages(cfg: Config) -> Result<()> {
     // 1. List the paths in the payload directory
@@ -238,8 +268,14 @@ fn send_messages(cfg: Config) -> Result<()> {
         info!("Found content {}", content);
     }
 
-    return show_stats(10);
-
+    return show_stats(Stats {
+        messages_sent: 0,
+        messages_failed: 0,
+        bytes_sent: 0,
+        start_time: Instant::now(),
+        last_update: Instant::now(),
+        connection_errors: 0,
+    });
 }
 
 fn show_config(cfg: Config) {
@@ -328,8 +364,7 @@ fn show_config(cfg: Config) {
     // Add a helpful tip
     println!(
         "{}",
-        "💡 Tip: Use 'barrage config set --help' to see available configuration options"
-            .black()
+        "💡 Tip: Use 'barrage config set --help' to see available configuration options".black()
     );
 }
 

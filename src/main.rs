@@ -1,15 +1,10 @@
 use std::{
-    fs,
-    io::{ErrorKind, Write, stdout},
-    process,
-    time::Instant,
+    fs, io::{stdout, ErrorKind, Write}, process, thread::{self, Thread}, time::{Duration, Instant}
 };
 
 use clap::{Parser, Subcommand};
 use crossterm::{
-    ExecutableCommand, QueueableCommand, cursor, queue,
-    style::{self, PrintStyledContent, Stylize},
-    terminal,
+    cursor, queue, style::{self, style, PrintStyledContent, Stylize}, terminal, ExecutableCommand, QueueableCommand
 };
 use futures::{SinkExt, StreamExt};
 use hl7_mllp_codec::MllpCodec;
@@ -182,35 +177,71 @@ struct Stats {
     connection_errors: u32,
 }
 /**
- * Shows a stats panel in the CLI and updates it when the stats can change
+ * Shows a stats panel in the CLI
+ * This function only shows the initial scaffolded stats page. The update function will attempt to update this in-place (I guess?)
  */
-fn show_stats(stats: Stats) -> Result<()> {
+fn show_stats() -> Result<()> {
     let mut stdout = stdout();
 
     stdout.execute(terminal::Clear(terminal::ClearType::All))?;
     stdout.execute(cursor::MoveTo(0, 0))?;
 
+
+    // Informative - the longest line is 18 characters long. Recommend >20: offset when actually printing the stats
     let mut y: i32 = 0;
     stdout
-        .queue(style::PrintStyledContent("╭──────────────────────────╮".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("│       Live stats         │".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("├──────────────────────────┤".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("│ Messages sent:           │".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("│ Messages failed:         │".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("│ Bytes sent:              │".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("│ Elapsed time:            │".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("│ Time remaining:          │".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("│ Message rate:            │".cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent("╰──────────────────────────╯".cyan()))?.queue(cursor::MoveToNextLine(1))?;
+        .queue(style::PrintStyledContent("╭────────────────────────────╮".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│         Live stats         │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("├────────────────────────────┤".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Messages sent:             │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Messages failed:           │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Bytes sent:                │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Elapsed time:              │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Time remaining:            │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("│ Message rate:              │".cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent("╰────────────────────────────╯".cyan()))?.queue(cursor::MoveToNextLine(1))?;
     
     stdout.flush()?;
     let progressbar = indicatif::ProgressBar::new(100);
-    progressbar.inc(10);
-    progressbar.elapsed();
+    progressbar.inc(10); 
+    progressbar.elapsed(); // Todo make this progress bar something useful later on (?)
+    
+    thread::sleep(Duration::from_secs(2));
+    let stats = Stats { 
+        messages_sent: 10, 
+        messages_failed: 2, 
+        bytes_sent: 0, 
+        start_time: Instant::now(), 
+        last_update: Instant::now(), 
+        connection_errors: 0 };
+    update_stats(&stats);
     Ok(())
 }
 
-fn update_stats() {}
+fn update_stats(stats: &Stats) -> Result<()> {
+    let mut stdout = stdout();
+
+    //stdout.execute(cursor::MoveTo(0,0))?;
+    stdout.execute(cursor::MoveTo(0,3))?;
+    
+    let elapsed_time = (Instant::now() - stats.start_time).as_secs();
+    let mut message_rate: u64 = 0;
+    if elapsed_time != 0 {
+        message_rate = stats.messages_sent as u64/ elapsed_time;
+    }
+    stdout
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Messages sent:", stats.messages_sent).cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Messages failed:", stats.messages_failed).cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Bytes sent:", stats.bytes_sent).cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Elapsed time:", elapsed_time).cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Time remaining:", "0 s").cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Message rate:", message_rate).cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(cursor::MoveToNextLine(3))?; //Move over all lines that we should not redraw. The old buffer will be used here
+    stdout.flush()?;
+
+    // Todo update should also fix the progress bar (later)
+    Ok(())
+}
 
 fn send_messages(cfg: Config) -> Result<()> {
     // 1. List the paths in the payload directory
@@ -268,14 +299,7 @@ fn send_messages(cfg: Config) -> Result<()> {
         info!("Found content {}", content);
     }
 
-    return show_stats(Stats {
-        messages_sent: 0,
-        messages_failed: 0,
-        bytes_sent: 0,
-        start_time: Instant::now(),
-        last_update: Instant::now(),
-        connection_errors: 0,
-    });
+    return show_stats();
 }
 
 fn show_config(cfg: Config) {

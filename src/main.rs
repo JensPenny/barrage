@@ -1,17 +1,29 @@
 use std::{
-    fs, io::{stdout, ErrorKind, Write}, process, thread::{self, Thread}, time::{Duration, Instant}
+    fs,
+    io::{ErrorKind, Write, stdout},
+    process,
+    sync::Arc,
+    thread::{self, Thread},
+    time::{Duration, Instant},
 };
 
 use clap::{Parser, Subcommand};
 use crossterm::{
-    cursor, queue, style::{self, style, PrintStyledContent, Stylize}, terminal, ExecutableCommand, QueueableCommand
+    ExecutableCommand, QueueableCommand, cursor, queue,
+    style::{self, PrintStyledContent, Stylize, style},
+    terminal,
 };
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, lock::Mutex, task};
 use hl7_mllp_codec::MllpCodec;
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::{bytes::BytesMut, codec::Framed};
+use tokio::time::{timeout, Duration as TokioDuration};
+
+
+pub use self::stats::Stats;
+mod stats;
 
 // Alias for boxed dynamic errors
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -73,7 +85,7 @@ pub enum ConfigCommands {
 }
 
 // Configuration class
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     host: String,
     port: u16,
@@ -139,13 +151,13 @@ async fn main() -> Result<()> {
                 Err(e) => println!("{}", format!("Could not connect: {:?}", e).red()),
             }
         }
-        Commands::Send => send_messages(cfg)?,
+        Commands::Send => send_messages(cfg).await?,
     }
     return Ok(());
 }
 
 async fn test_connection(host: String, port: u16) -> Result<()> {
-    let stream = TcpStream::connect(format!("{}:{}", host, port)).await?;
+    let stream: TcpStream = TcpStream::connect(format!("{}:{}", host, port)).await?;
     let mut transport = Framed::new(stream, MllpCodec::new());
     transport
         .send(BytesMut::from(
@@ -167,25 +179,16 @@ fn send_as_mllp(cfg: Config, msg: String) {
     // https://docs.rs/hl7-mllp-codec/latest/hl7_mllp_codec/
 }
 
-#[derive(Debug, Clone)]
-struct Stats {
-    messages_sent: u32,
-    messages_failed: u32,
-    bytes_sent: u64,
-    start_time: std::time::Instant,
-    last_update: std::time::Instant,
-    connection_errors: u32,
-}
 /**
  * Shows a stats panel in the CLI
  * This function only shows the initial scaffolded stats page. The update function will attempt to update this in-place (I guess?)
  */
+#[rustfmt::skip] // Skip formatting for this function, the current look is nice
 fn show_stats() -> Result<()> {
     let mut stdout = stdout();
 
     stdout.execute(terminal::Clear(terminal::ClearType::All))?;
     stdout.execute(cursor::MoveTo(0, 0))?;
-
 
     // Informative - the longest line is 18 characters long. Recommend >20: offset when actually printing the stats
     let mut y: i32 = 0;
@@ -203,18 +206,18 @@ fn show_stats() -> Result<()> {
     
     stdout.flush()?;
     let progressbar = indicatif::ProgressBar::new(100);
-    progressbar.inc(10); 
+    progressbar.inc(10);
     progressbar.elapsed(); // Todo make this progress bar something useful later on (?)
-    
+
     thread::sleep(Duration::from_secs(2));
-    let stats = Stats { 
-        messages_sent: 10, 
-        messages_failed: 2, 
-        bytes_sent: 0, 
-        start_time: Instant::now(), 
-        last_update: Instant::now(), 
-        connection_errors: 0 };
-    update_stats(&stats);
+    // let stats = Stats {
+    //     messages_sent: 10,
+    //     messages_failed: 2,
+    //     bytes_sent: 0,
+    //     start_time: Instant::now(),
+    //     last_update: Instant::now(),
+    //     connection_errors: 0 };
+    // update_stats(&stats);
     Ok(())
 }
 
@@ -222,20 +225,42 @@ fn update_stats(stats: &Stats) -> Result<()> {
     let mut stdout = stdout();
 
     //stdout.execute(cursor::MoveTo(0,0))?;
-    stdout.execute(cursor::MoveTo(0,3))?;
-    
+    stdout.execute(cursor::MoveTo(0, 3))?;
+
     let elapsed_time = (Instant::now() - stats.start_time).as_secs();
     let mut message_rate: u64 = 0;
     if elapsed_time != 0 {
-        message_rate = stats.messages_sent as u64/ elapsed_time;
+        message_rate = stats.messages_sent as u64 / elapsed_time;
     }
     stdout
-        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Messages sent:", stats.messages_sent).cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Messages failed:", stats.messages_failed).cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Bytes sent:", stats.bytes_sent).cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Elapsed time:", elapsed_time).cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Time remaining:", "0 s").cyan()))?.queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Message rate:", message_rate).cyan()))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(
+            format!("│ {:<20} {:>5} │", "Messages sent:", stats.messages_sent).cyan(),
+        ))?
+        .queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(
+            format!(
+                "│ {:<20} {:>5} │",
+                "Messages failed:", stats.messages_failed
+            )
+            .cyan(),
+        ))?
+        .queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(
+            format!("│ {:<20} {:>5} │", "Bytes sent:", stats.bytes_sent).cyan(),
+        ))?
+        .queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(
+            format!("│ {:<20} {:>5} │", "Elapsed time:", elapsed_time).cyan(),
+        ))?
+        .queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(
+            format!("│ {:<20} {:>5} │", "Time remaining:", "0 s").cyan(),
+        ))?
+        .queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(
+            format!("│ {:<20} {:>5} │", "Message rate:", message_rate).cyan(),
+        ))?
+        .queue(cursor::MoveToNextLine(1))?
         .queue(cursor::MoveToNextLine(3))?; //Move over all lines that we should not redraw. The old buffer will be used here
     stdout.flush()?;
 
@@ -243,7 +268,7 @@ fn update_stats(stats: &Stats) -> Result<()> {
     Ok(())
 }
 
-fn send_messages(cfg: Config) -> Result<()> {
+async fn send_messages(cfg: Config) -> Result<()> {
     // 1. List the paths in the payload directory
     let payloads = cfg.payload_path.read_dir();
     let paths = match payloads {
@@ -259,7 +284,7 @@ fn send_messages(cfg: Config) -> Result<()> {
 
     let mut file_contents: Vec<String> = Vec::new();
 
-    // Iterate over the paths and load them in memory
+    //2. Iterate over the paths and load them in memory
     for path_result in paths {
         let path = match path_result {
             Ok(p) => p,
@@ -295,11 +320,202 @@ fn send_messages(cfg: Config) -> Result<()> {
         file_contents.push(payload_content);
     }
 
-    for content in file_contents {
-        info!("Found content {}", content);
+    // 3. Show a message about the messages and that they are loaded, and stand by to start the live sending
+    //start_stats_thread(stats);
+    // for content in file_contents {
+    //     info!("Found content {}", content);
+    // }
+
+    // 4. Start the worker threads to start sending messages
+    let stats = Arc::new(Mutex::new(Stats::new()));
+    let amount_workers = 4;
+    let mut handles = Vec::new(); // Can be an array, we know the length
+
+    for i in 0..amount_workers {
+        let msg_clone = file_contents.clone();
+        let cfg_clone = cfg.clone();
+        let stats_clone = Arc::clone(&stats);
+
+        let join_handle = tokio::spawn(async move {
+            let stream: TcpStream =
+                TcpStream::connect(format!("{}:{}", cfg_clone.host, cfg_clone.port))
+                    .await
+                    .unwrap();
+            let mut transport = Framed::new(stream, MllpCodec::new());
+
+            // For now we all send the same message
+            for (idx, to_send_msg) in msg_clone.iter().enumerate() {
+                let is_sent = send_message(
+                    Arc::clone(&stats_clone),
+                    cfg_clone.clone(),
+                    to_send_msg.to_string(),
+                    &mut transport,
+                ).await;
+
+                // Todo check if this is ok. We kind of want to ignore ok / err here, or just dump them in some kind of log for the messages if needed
+                match is_sent {
+                    Ok(res) => res, 
+                    Err(e) => error!("Error while sending message: {}", e)  
+                }
+            }
+        });
+
+        handles.push(join_handle);
+
+        // let handle = tokio::spawn(async move {
+        //     let stream: TcpStream = TcpStream::connect(format!("{}:{}", cfg.host, cfg.port)).await.unwrap();
+        //     let mut transport = Framed::new(stream, MllpCodec::new());
+
+        //     // For now they just all send the same mesag
+        //     for (idx, msg) in msg_clone.iter().enumerate() {
+        //         if idx % amount_workers == i {
+        //             if let Err(e) =
+        //                 send_message(stat_clone, cfg, msg.to_string(), transport).await
+        //             {
+        //                 error!("Worker {} failed to send message: {}", i, e);
+        //             }
+        //         }
+        //     }
+        // });
+        // handles.push(handle);
     }
 
-    return show_stats();
+    //Cancellation token to nuke other threads if required
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let _ = show_stats(); ///Initially show the stats
+    // Create a separate worker to handle ui updates
+    let display_stats = Arc::clone(&stats);
+    let display_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(50));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let stats_guard = display_stats.lock().await;
+                    let snapshot = stats_guard.clone();
+
+                    match update_stats(&snapshot) {
+                        Ok(_) => println!("{}", "Stats updated!".green()),
+                        Err(e) => println!("{}", format!("Stat update failed: {:?}", e).red()),
+                    }
+                }
+                _ = &mut shutdown_rx => {
+                    info!("Stats display task shutting down");
+                    
+                    //Update the stats a last time
+                    let stats_guard = display_stats.lock().await;
+                    let snapshot = stats_guard.clone();
+                    let _ = update_stats(&snapshot);
+                    break;
+                }
+            }
+        }
+    });
+
+    for handle in handles {
+        if let Err(e) = handle.await {
+            error!("Worker task failed: {}", e);
+        }
+    }
+
+    // Kill the display task
+    let _ = shutdown_tx.send(());
+
+    if let Err(e) = display_handle.await {
+        error!("Display task failed: {}", e);
+    }
+
+    // Wait for all workers to complete
+    // for handle in handles {
+    //     if let Err(e) = handle.await {
+    //         error!("Worker task failed: {}", e);
+    //     }
+    // }
+
+    // 5. While we are running, show the stats page
+
+    return Ok(());
+}
+
+//Drawing stats to the terminal is blocking
+
+//Sending messages can be async
+async fn send_message(
+    stats: Arc<Mutex<Stats>>,
+    cfg: Config,
+    msg: String,
+    transport: &mut Framed<TcpStream, MllpCodec>,
+) -> Result<()> {
+    // Todo make this so that we can stop gracefully
+    loop {
+        match cfg.connection_type {
+            ConnectionType::TcpMllpClient => {
+                info!("Starting to send message");
+                transport.send(BytesMut::from(msg.as_str())).await?;
+                info!("Message sent, waiting for response");
+
+                let response = timeout(Duration::from_secs(10), transport.next()).await;
+                let mut resp_ok;
+                match response {
+                    Err(_) => {
+                        info!("Timeout waiting for response from server");
+                        let mut stats = stats.lock().await;
+                        stats.messages_failed += 1;
+                        stats.last_update = Instant::now();
+                        return Err(std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            "No response from remote host (timeout)",
+                        )
+                        .into());
+                    }
+                    Ok(res) => {
+                        // Continue processing below
+                        resp_ok = res;
+                    }
+                }
+
+                let res = match resp_ok {
+                    Some(Ok(_msg)) => {
+                        info!("Received response from server");
+                        let mut stats = stats.lock().await;
+                        stats.messages_sent += 1;
+                        stats.bytes_sent += _msg.len() as u64;
+                        stats.last_update = Instant::now();
+                        Ok(())
+                    }
+                    Some(Err(e)) => {
+                        info!("Error receiving response from server: {}", e);
+                        let mut stats = stats.lock().await;
+                        stats.messages_failed += 1;
+                        stats.last_update = Instant::now();
+                        Err(e.into())
+                    }
+                    None => {
+                        info!("No response from server (timeout?)");
+                        let mut stats = stats.lock().await;
+                        stats.messages_failed += 1;
+                        stats.last_update = Instant::now();
+                        Err(std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            "No response from remote host",
+                        )
+                        .into())
+                    }
+                };
+
+                if res.is_err() {
+                    return res;
+                } else {
+                    info!("Message exchange completed successfully");
+                    return Ok(());
+                }
+            }
+            ConnectionType::HttpClient => {
+                // Todo implement http client sending
+                return Err("HTTP client not implemented yet".into());
+            }
+        }
+    }
 }
 
 fn show_config(cfg: Config) {

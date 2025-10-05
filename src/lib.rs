@@ -1,7 +1,17 @@
+use log::error;
+
 pub fn match_lines(content: &str, pattern: &str, mut writer: impl std::io::Write) {
     for line in content.lines() {
         if line.contains(pattern) {
-            writeln!(writer, "{}", line);
+            let result  = writeln!(writer, "{}", line);
+            match result {
+                Err(e) => { 
+                    error!("Error matching lines: {}", e);
+                }
+                Ok(()) => { 
+                    // noop 
+                }
+            };
         }
     }
 }

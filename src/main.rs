@@ -3,23 +3,23 @@ use std::{
     io::{ErrorKind, Write, stdout},
     process,
     sync::Arc,
-    thread::{self, Thread},
+    thread::{self},
     time::{Duration, Instant},
 };
 
 use clap::{Parser, Subcommand};
 use crossterm::{
-    ExecutableCommand, QueueableCommand, cursor, queue,
-    style::{self, PrintStyledContent, Stylize, style},
+    ExecutableCommand, QueueableCommand, cursor,
+    style::{self, Stylize},
     terminal,
 };
-use futures::{SinkExt, StreamExt, lock::Mutex, task};
+use futures::{SinkExt, StreamExt, lock::Mutex};
 use hl7_mllp_codec::MllpCodec;
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::{bytes::BytesMut, codec::Framed};
-use tokio::time::{timeout, Duration as TokioDuration};
+use tokio::time::{timeout};
 
 
 pub use self::stats::Stats;
@@ -29,10 +29,18 @@ mod stats;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug, Clone, clap::ValueEnum, Default, Serialize, Deserialize)]
-enum ConnectionType {
+pub enum ConnectionType {
     #[default]
     TcpMllpClient,
     HttpClient,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum, Default, Serialize, Deserialize)]
+pub enum SendMode {     
+    #[default]
+    Timed,      // Keep sending messages for a set amount of time
+    Single,     // Send all messages in the folder once
+    SetAmount,  // Send a set amount of messages
 }
 
 #[derive(Parser, Debug)]
@@ -81,6 +89,10 @@ pub enum ConfigCommands {
         connection_type: Option<ConnectionType>,
         #[arg(long)]
         payload_path: Option<std::path::PathBuf>,
+        #[arg(long, value_enum)]
+        send_mode: Option<SendMode>,
+        #[arg(long, default_value="10")]
+        send_time: Option<u8>,
     },
 }
 
@@ -91,6 +103,8 @@ pub struct Config {
     port: u16,
     connection_type: ConnectionType,
     payload_path: std::path::PathBuf,
+    send_mode: SendMode, 
+    send_time: u8
 }
 
 // Default configuration
@@ -101,6 +115,8 @@ impl ::std::default::Default for Config {
             port: 20_000,
             connection_type: ConnectionType::TcpMllpClient,
             payload_path: "payload/".into(),
+            send_mode: SendMode::Timed,
+            send_time: 10,
         }
     }
 }
@@ -127,6 +143,8 @@ async fn main() -> Result<()> {
                 port,
                 connection_type,
                 payload_path,
+                send_mode, 
+                send_time
             } => {
                 if let Some(host) = host {
                     cfg.host = host;
@@ -139,6 +157,12 @@ async fn main() -> Result<()> {
                 };
                 if let Some(payload_path) = payload_path {
                     cfg.payload_path = payload_path
+                };
+                if let Some(send_mode) = send_mode {
+                    cfg.send_mode = send_mode
+                };
+                if let Some(send_time) = send_time { 
+                    cfg.send_time = send_time
                 };
 
                 confy::store_path("barrage.conf", &cfg)?;
@@ -174,10 +198,10 @@ async fn test_connection(host: String, port: u16) -> Result<()> {
     }
 }
 
-// Sends an mllp framed message. This looks to be the actual thing to use here
-fn send_as_mllp(cfg: Config, msg: String) {
-    // https://docs.rs/hl7-mllp-codec/latest/hl7_mllp_codec/
-}
+// // Sends an mllp framed message. This looks to be the actual thing to use here
+// fn send_as_mllp(cfg: Config, msg: String) {
+//     // https://docs.rs/hl7-mllp-codec/latest/hl7_mllp_codec/
+// }
 
 /**
  * Shows a stats panel in the CLI
@@ -191,7 +215,6 @@ fn show_stats() -> Result<()> {
     stdout.execute(cursor::MoveTo(0, 0))?;
 
     // Informative - the longest line is 18 characters long. Recommend >20: offset when actually printing the stats
-    let mut y: i32 = 0;
     stdout
         .queue(style::PrintStyledContent("╭────────────────────────────╮".cyan()))?.queue(cursor::MoveToNextLine(1))?
         .queue(style::PrintStyledContent("│         Live stats         │".cyan()))?.queue(cursor::MoveToNextLine(1))?
@@ -331,7 +354,7 @@ async fn send_messages(cfg: Config) -> Result<()> {
     let amount_workers = 4;
     let mut handles = Vec::new(); // Can be an array, we know the length
 
-    for i in 0..amount_workers {
+    for _i in 0..amount_workers {
         let msg_clone = file_contents.clone();
         let cfg_clone = cfg.clone();
         let stats_clone = Arc::clone(&stats);
@@ -344,7 +367,7 @@ async fn send_messages(cfg: Config) -> Result<()> {
             let mut transport = Framed::new(stream, MllpCodec::new());
 
             // For now we all send the same message
-            for (idx, to_send_msg) in msg_clone.iter().enumerate() {
+            for (_idx, to_send_msg) in msg_clone.iter().enumerate() {
                 let is_sent = send_message(
                     Arc::clone(&stats_clone),
                     cfg_clone.clone(),
@@ -383,7 +406,7 @@ async fn send_messages(cfg: Config) -> Result<()> {
     //Cancellation token to nuke other threads if required
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-    let _ = show_stats(); ///Initially show the stats
+    let _ = show_stats(); // Initially show the stats
     // Create a separate worker to handle ui updates
     let display_stats = Arc::clone(&stats);
     let display_handle = tokio::spawn(async move {
@@ -455,7 +478,7 @@ async fn send_message(
                 info!("Message sent, waiting for response");
 
                 let response = timeout(Duration::from_secs(10), transport.next()).await;
-                let mut resp_ok;
+                let resp_ok;
                 match response {
                     Err(_) => {
                         info!("Timeout waiting for response from server");

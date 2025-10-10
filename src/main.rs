@@ -130,6 +130,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut cfg: Config = confy::load_path("barrage.conf").unwrap_or_else(|e| {
         error!("Error loading config: {}", e);
+        // Todo translate the error "Bad TOML data" to something like "Configuration error - did you remove or forget a field?"
         Config::default()
     });
 
@@ -559,6 +560,17 @@ fn show_config(cfg: Config) {
         "Connection Type:".green(),
         format!("{:?}", cfg.connection_type).yellow()
     );
+    println!(
+        "   {:<15} {}", 
+        "Send mode".green(), 
+        format!("{:?}", cfg.send_mode).yellow()
+    );
+    println!(
+        "   {:<15} {}",
+        "Send time (sec):".green(),
+        cfg.send_time.to_string().yellow()
+    );
+    
     println!();
 
     println!("{}", "📁 File Settings:".blue().bold());

@@ -7,11 +7,12 @@ It's main purpose is to fire off events to event busses and other applications t
 
 This contains the next work-items that need to be done
 
-- [ ] Read the rust CLI book: IN PROGRESS
-- [ ] `cargo add tokio` for async threading + read up on how it works.
+- [x] Read the rust CLI book
+- [x] `cargo add tokio` for async threading + read up on how it works.
       `crossbeam-channel` could be used if there needs to be message passing, but I think thats not necessary.
-- [ ] check if we need the crate `exitcode` for different exit codes.
-- [ ] use `human_panic` to panic and refer to the github or whatever for issues.
+- [x] check if we need the crate `exitcode` for different exit codes.
+- [ ] find out on how to deploy this thing
+- [ ] use `human_panic` to panic and refer to the github or whatever for issues. <https://rust-cli.github.io/book/in-depth/human-communication.html>
 - [ ] the recorded stats of the messages that are sent and not sent should be saved to file at the end of the program.
 - [ ] check out mangen for an automatic way to generate a man page.
       the examples there also have a pretty good basic example for a cli page.
@@ -24,3 +25,7 @@ IF we need more handlers for events, then use `signal-hook` instead of the curre
 ## Features
 
 //todo create the requirements here
+
+## Remarks
+
+I have read a shitload of stuff on tokio and crossbeam, but I don't feel like I really understand these. 

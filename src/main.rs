@@ -12,13 +12,14 @@ use crossterm::{
     style::{self, Stylize},
     terminal,
 };
-use futures::{SinkExt, StreamExt, lock::Mutex};
 use hl7_mllp_codec::MllpCodec;
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::{bytes::BytesMut, codec::Framed};
 use tokio::time::{timeout};
+use tokio::sync::{Mutex};
+use futures::{SinkExt, StreamExt};
 
 
 pub use self::stats::Stats;
@@ -333,14 +334,14 @@ async fn send_messages(cfg: Config) -> Result<()> {
         _ => None,
     };
 
-    let stats = Arc::new(Mutex::new(Stats::new().with_end_time(end_time)));
+    let stats: Arc<Mutex<Stats>> = Arc::new(Mutex::new(Stats::new().with_end_time(end_time)));
 
     for i in 0..amount_workers {
         let msg_clone = file_contents.clone();
         let cfg_clone = cfg.clone();
         let stats_clone = Arc::clone(&stats);
 
-        let join_handle = tokio::spawn(async move {
+        let join_handle = tokio::task::spawn(async move {
             // Keep trying to establish initial connection
             let mut transport = loop {
                 match TcpStream::connect(format!("{}:{}", cfg_clone.host, cfg_clone.port)).await {
@@ -520,7 +521,7 @@ async fn send_messages(cfg: Config) -> Result<()> {
     let _ = show_stats(); // Initially show the stats
     // Create a separate worker to handle ui updates
     let display_stats = Arc::clone(&stats);
-    let display_handle = tokio::spawn(async move {
+    let display_handle = tokio::task::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(50));
         loop {
             tokio::select! {
@@ -627,7 +628,7 @@ fn show_config(cfg: Config) {
     println!("{}", "╰─────────────────────────────────────╯".cyan());
     println!();
 
-    println!("{}", "📡 Connection Settings:".blue().bold());
+    println!("{}", "🔗 Connection Settings:".blue().bold());
     println!("   {:<15} {}", "Host:".green(), cfg.host.yellow());
     println!(
         "   {:<15} {}",
@@ -652,7 +653,7 @@ fn show_config(cfg: Config) {
     
     println!();
 
-    println!("{}", "📁 File Settings:".blue().bold());
+    println!("{}", "🚛 Payload:".blue().bold());
     println!(
         "   {:<15} {}",
         "Payload Path:".green(),

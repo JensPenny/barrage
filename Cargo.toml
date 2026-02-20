@@ -2,6 +2,10 @@
 name = "barrage"
 version = "0.6.0"
 edition = "2024"
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+    ]
 
 authors = ["Jens <rusty.jens@fastmail.com>"]
 description = "A command line tool to test the throughput of TCP HL7 message consumers."

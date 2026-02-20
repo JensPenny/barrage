@@ -1,11 +1,17 @@
 [package]
 name = "barrage"
-version = "0.1.0"
+version = "0.6.0"
 edition = "2024"
+
+description = "A command line tool to test the throughput of TCP HL7 message consumers."
+repository = "https://github.com/JensPenny/barrage"
+readme = "readme.md"
+keywords = ["hl7", "healthcare", "cli", "tool"]
+license = " GPL-3.0-or-later"
 
 [dependencies]
 assert_cmd = "2.0.17"
-clap = { version = "4.5.59", features = ["derive"] }
+clap = { version = "4.5.60", features = ["derive"] }
 confy = "2.0.0"
 crossterm = "0.29.0"
 ctrlc = "3.5.2"

@@ -673,34 +673,34 @@ fn show_config(cfg: Config) {
             "✓".green()
         );
 
-        if let Ok(metadata) = config_path.metadata() {
-            if let Ok(modified) = metadata.modified() {
-                let datetime = modified
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                println!(
-                    "   {:<15} {}",
-                    "Last Modified:".green(),
-                    format!(
-                        "{} seconds ago",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs()
-                            - datetime
-                    )
-                    .black()
-                );
-            }
+        // if let Ok(metadata) = config_path.metadata() {
+        //     if let Ok(modified) = metadata.modified() {
+        //         let datetime = modified
+        //             .duration_since(std::time::UNIX_EPOCH)
+        //             .map(|d| d.as_secs())
+        //             .unwrap_or(0);
+        //         println!(
+        //             "   {:<15} {}",
+        //             "Last Modified:".green(),
+        //             format!(
+        //                 "{} seconds ago",
+        //                 std::time::SystemTime::now()
+        //                     .duration_since(std::time::UNIX_EPOCH)
+        //                     .unwrap()
+        //                     .as_secs()
+        //                     - datetime
+        //             )
+        //             .black()
+        //         );
+        //     }
 
-            let size = metadata.len();
-            println!(
-                "   {:<15} {} bytes",
-                "Size:".green(),
-                size.to_string().black()
-            );
-        }
+        //     let size = metadata.len();
+        //     println!(
+        //         "   {:<15} {} bytes",
+        //         "Size:".green(),
+        //         size.to_string().black()
+        //     );
+        // }
     } else {
         println!(
             "   {:<15} {} {}",

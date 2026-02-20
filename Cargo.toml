@@ -3,10 +3,12 @@ name = "barrage"
 version = "0.6.0"
 edition = "2024"
 
+authors = ["Jens <rusty.jens@fastmail.com>"]
 description = "A command line tool to test the throughput of TCP HL7 message consumers."
 repository = "https://github.com/JensPenny/barrage"
 readme = "readme.md"
 keywords = ["hl7", "healthcare", "cli", "tool"]
+categories = ["command-line-utilities"]
 license = " GPL-3.0-or-later"
 
 [dependencies]

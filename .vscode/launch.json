@@ -8,16 +8,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'barrage'",
+            "name": "Debug unit tests in library 'strike'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=barrage"
+                    "--package=strike"
                 ],
                 "filter": {
-                    "name": "barrage",
+                    "name": "strike",
                     "kind": "lib"
                 }
             },
@@ -27,15 +27,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'barrage' send",
+            "name": "Debug executable 'strike' send",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=barrage",
-                    "--package=barrage"
+                    "--bin=strike",
+                    "--package=strike"
                 ],
                 "filter": {
-                    "name": "barrage",
+                    "name": "strike",
                     "kind": "bin"
                 }
             },
@@ -45,16 +45,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'barrage'",
+            "name": "Debug unit tests in executable 'strike'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=barrage",
-                    "--package=barrage"
+                    "--bin=strike",
+                    "--package=strike"
                 ],
                 "filter": {
-                    "name": "barrage",
+                    "name": "strike",
                     "kind": "bin"
                 }
             },
@@ -64,13 +64,13 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug barrage tests",
+            "name": "Debug strike tests",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--test=cli",
-                    "--package=barrage"
+                    "--package=strike"
                 ],
                 "filter": {
                     "name": "cli",

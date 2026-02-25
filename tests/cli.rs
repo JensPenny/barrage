@@ -6,7 +6,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn file_does_not_exist() -> Result<()> {
-    let mut cmd = Command::cargo_bin("barrage")?;
+    let mut cmd = Command::cargo_bin("strike")?;
 
     cmd.arg("foobar").arg("fake/test/file");
     cmd.assert()

@@ -52,7 +52,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Manage the barrage configuration
+    /// Manage the strike configuration
     Config {
         #[command(subcommand)]
         action: ConfigCommands,
@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
     set_ctrlc_handler();
 
     let cli = Cli::parse();
-    let mut cfg: Config = confy::load_path("barrage.conf").unwrap_or_else(|e| {
+    let mut cfg: Config = confy::load_path("strike.conf").unwrap_or_else(|e| {
         error!("Error loading config: {}", e);
         // Todo translate the error "Bad TOML data" to something like "Configuration error - did you remove or forget a field?"
         Config::default()
@@ -166,14 +166,16 @@ async fn main() -> Result<()> {
                     cfg.send_time = send_time
                 };
 
-                confy::store_path("barrage.conf", &cfg)?;
+                confy::store_path("strike.conf", &cfg)?;
                 info!("Config updates saved: {:#?}", cfg);
             }
         },
         Commands::TestConnection { host, port } => {
-            match test_connection(host.unwrap_or(cfg.host), port.unwrap_or(cfg.port)).await {
+            let target = host.unwrap_or_else(|| cfg.host.clone());
+            let port = port.unwrap_or(cfg.port);
+            match test_connection(target.clone(), port).await {
                 Ok(_) => println!("{}", "Connection succeeded!".green()),
-                Err(e) => println!("{}", format!("Could not connect: {:?}", e).red()),
+                Err(e) => println!("{}", format!("Could not connect to {}:{} {:?}", target, port, e).red()),
             }
         }
         Commands::Send => send_messages(cfg).await?,
@@ -624,7 +626,7 @@ async fn send_message(
 
 fn show_config(cfg: Config) {
     println!("{}", "╭─────────────────────────────────────╮".cyan());
-    println!("{}", "│          Barrage Configuration      │".cyan());
+    println!("{}", "│          Strike  Configuration      │".cyan());
     println!("{}", "╰─────────────────────────────────────╯".cyan());
     println!();
 
@@ -662,7 +664,7 @@ fn show_config(cfg: Config) {
     println!();
 
     // Show config file location and status
-    let config_path = std::path::Path::new("barrage.conf");
+    let config_path = std::path::Path::new("strike.conf");
     println!("{}", "⚙️  Configuration:".blue().bold());
 
     if config_path.exists() {
@@ -673,34 +675,34 @@ fn show_config(cfg: Config) {
             "✓".green()
         );
 
-        // if let Ok(metadata) = config_path.metadata() {
-        //     if let Ok(modified) = metadata.modified() {
-        //         let datetime = modified
-        //             .duration_since(std::time::UNIX_EPOCH)
-        //             .map(|d| d.as_secs())
-        //             .unwrap_or(0);
-        //         println!(
-        //             "   {:<15} {}",
-        //             "Last Modified:".green(),
-        //             format!(
-        //                 "{} seconds ago",
-        //                 std::time::SystemTime::now()
-        //                     .duration_since(std::time::UNIX_EPOCH)
-        //                     .unwrap()
-        //                     .as_secs()
-        //                     - datetime
-        //             )
-        //             .black()
-        //         );
-        //     }
+        if let Ok(metadata) = config_path.metadata() {
+            if let Ok(modified) = metadata.modified() {
+                let datetime = modified
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                println!(
+                    "   {:<15} {}",
+                    "Last Modified:".green(),
+                    format!(
+                        "{} seconds ago",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            - datetime
+                    )
+                    .black()
+                );
+            }
 
-        //     let size = metadata.len();
-        //     println!(
-        //         "   {:<15} {} bytes",
-        //         "Size:".green(),
-        //         size.to_string().black()
-        //     );
-        // }
+            let size = metadata.len();
+            println!(
+                "   {:<15} {} bytes",
+                "Size:".green(),
+                size.to_string().black()
+            );
+        }
     } else {
         println!(
             "   {:<15} {} {}",
@@ -719,7 +721,7 @@ fn show_config(cfg: Config) {
     // Add a helpful tip
     println!(
         "{}",
-        "💡 Tip: Use 'barrage config set --help' to see available configuration options".black()
+        "💡 Tip: Use 'strike config set --help' to see available configuration options".black()
     );
 }
 

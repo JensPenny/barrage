@@ -12,15 +12,14 @@ use crossterm::{
     style::{self, Stylize},
     terminal,
 };
+use futures::{SinkExt, StreamExt};
 use hl7_mllp_codec::MllpCodec;
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+use tokio::time::timeout;
 use tokio_util::{bytes::BytesMut, codec::Framed};
-use tokio::time::{timeout};
-use tokio::sync::{Mutex};
-use futures::{SinkExt, StreamExt};
-
 
 pub use self::stats::Stats;
 mod stats;
@@ -36,11 +35,11 @@ pub enum ConnectionType {
 }
 
 #[derive(Debug, Clone, clap::ValueEnum, Default, Serialize, Deserialize)]
-pub enum SendMode {     
+pub enum SendMode {
     #[default]
-    Timed,      // Keep sending messages for a set amount of time
-    Single,     // Send all messages in the folder once
-    SetAmount,  // Send a set amount of messages
+    Timed, // Keep sending messages for a set amount of time
+    Single,    // Send all messages in the folder once
+    SetAmount, // Send a set amount of messages
 }
 
 #[derive(Parser, Debug)]
@@ -91,8 +90,10 @@ pub enum ConfigCommands {
         payload_path: Option<std::path::PathBuf>,
         #[arg(long, value_enum)]
         send_mode: Option<SendMode>,
-        #[arg(long, default_value="10")]
+        #[arg(long, default_value = "10")]
         send_time: Option<u8>,
+        #[arg(long, default_value = "1.0")]
+        message_rate: Option<f32>,
     },
 }
 
@@ -103,8 +104,9 @@ pub struct Config {
     port: u16,
     connection_type: ConnectionType,
     payload_path: std::path::PathBuf,
-    send_mode: SendMode, 
-    send_time: u8
+    send_mode: SendMode,
+    send_time: u8,
+    message_rate: f32,
 }
 
 // Default configuration
@@ -117,6 +119,7 @@ impl ::std::default::Default for Config {
             payload_path: "payload/".into(),
             send_mode: SendMode::Timed,
             send_time: 10,
+            message_rate: 1.0,
         }
     }
 }
@@ -144,8 +147,9 @@ async fn main() -> Result<()> {
                 port,
                 connection_type,
                 payload_path,
-                send_mode, 
-                send_time
+                send_mode,
+                send_time,
+                message_rate,
             } => {
                 if let Some(host) = host {
                     cfg.host = host;
@@ -162,9 +166,12 @@ async fn main() -> Result<()> {
                 if let Some(send_mode) = send_mode {
                     cfg.send_mode = send_mode
                 };
-                if let Some(send_time) = send_time { 
+                if let Some(send_time) = send_time {
                     cfg.send_time = send_time
                 };
+                if let Some(message_rate) = message_rate {
+                    cfg.message_rate = message_rate
+                }
 
                 confy::store_path("strike.conf", &cfg)?;
                 info!("Config updates saved: {:#?}", cfg);
@@ -175,7 +182,10 @@ async fn main() -> Result<()> {
             let port = port.unwrap_or(cfg.port);
             match test_connection(target.clone(), port).await {
                 Ok(_) => println!("{}", "Connection succeeded!".green()),
-                Err(e) => println!("{}", format!("Could not connect to {}:{} {:?}", target, port, e).red()),
+                Err(e) => println!(
+                    "{}",
+                    format!("Could not connect to {}:{} {:?}", target, port, e).red()
+                ),
             }
         }
         Commands::Send => send_messages(cfg).await?,
@@ -229,6 +239,7 @@ fn show_stats() -> Result<()> {
     Ok(())
 }
 
+#[rustfmt::skip] // Skip formatting for this function, the current look is nice
 fn update_stats(stats: &Stats) -> Result<()> {
     let mut stdout = stdout();
 
@@ -248,32 +259,12 @@ fn update_stats(stats: &Stats) -> Result<()> {
     };
 
     stdout
-        .queue(style::PrintStyledContent(
-            format!("│ {:<20} {:>5} │", "Messages sent:", stats.messages_sent).cyan(),
-        ))?
-        .queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(
-            format!(
-                "│ {:<20} {:>5} │",
-                "Messages failed:", stats.messages_failed
-            )
-            .cyan(),
-        ))?
-        .queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(
-            format!("│ {:<20} {:>5} │", "Bytes sent:", stats.bytes_sent).cyan(),
-        ))?
-        .queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(
-            format!("│ {:<20} {:>5} │", "Elapsed time:", format!("{} s", elapsed_time)).cyan(),
-        ))?
-        .queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(
-            format!("│ {:<20} {:>5} │", "Time remaining:", time_remaining).cyan(),
-        ))?
-        .queue(cursor::MoveToNextLine(1))?
-        .queue(style::PrintStyledContent(
-            format!("│ {:<20} {:>5} │", "Message rate:", format!("{}/s", message_rate)).cyan(),
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Messages sent:", stats.messages_sent).cyan(),))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Messages failed:", stats.messages_failed).cyan(),))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Bytes sent:", stats.bytes_sent).cyan(),))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Elapsed time:", format!("{} s", elapsed_time)).cyan(),))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Time remaining:", time_remaining).cyan(),))?.queue(cursor::MoveToNextLine(1))?
+        .queue(style::PrintStyledContent(format!("│ {:<20} {:>5} │", "Message rate:", format!("{}/s", message_rate)).cyan(),
         ))?
         .queue(cursor::MoveToNextLine(1))?
         .queue(cursor::MoveToNextLine(3))?; //Move over all lines that we should not redraw. The old buffer will be used here
@@ -329,6 +320,18 @@ async fn send_messages(cfg: Config) -> Result<()> {
     // 3. Start the worker threads to start sending messages
     let amount_workers = 4;
     let mut handles = Vec::new();
+
+    // Rate limiting: divide the total target rate across workers.
+    // Each worker sleeps this long between sends so the combined
+    // throughput equals cfg.message_rate messages/sec.
+    // A rate of 0.0 means unlimited (no sleep).
+    let per_worker_delay = if cfg.message_rate > 0.0 {
+        Some(Duration::from_secs_f32(
+            amount_workers as f32 / cfg.message_rate,
+        ))
+    } else {
+        None
+    };
 
     // Calculate end time for timed mode
     let end_time = match cfg.send_mode {
@@ -389,7 +392,8 @@ async fn send_messages(cfg: Config) -> Result<()> {
                                 Arc::clone(&stats_clone),
                                 to_send_msg.to_string(),
                                 &mut transport,
-                            ).await;
+                            )
+                            .await;
 
                             if let Err(e) = send_result {
                                 let error_msg = e.to_string();
@@ -404,7 +408,12 @@ async fn send_messages(cfg: Config) -> Result<()> {
                             // Keep trying to reconnect until successful
                             loop {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
-                                match TcpStream::connect(format!("{}:{}", cfg_clone.host, cfg_clone.port)).await {
+                                match TcpStream::connect(format!(
+                                    "{}:{}",
+                                    cfg_clone.host, cfg_clone.port
+                                ))
+                                .await
+                                {
                                     Ok(s) => {
                                         transport = Framed::new(s, MllpCodec::new());
                                         let mut stats = stats_clone.lock().await;
@@ -413,11 +422,17 @@ async fn send_messages(cfg: Config) -> Result<()> {
                                         break; // Break the reconnection loop, not the main loop
                                     }
                                     Err(reconnect_err) => {
-                                        error!("Worker {} failed to reconnect, retrying: {}", i, reconnect_err);
+                                        error!(
+                                            "Worker {} failed to reconnect, retrying: {}",
+                                            i, reconnect_err
+                                        );
                                         // Check if time has expired in Timed mode
                                         if let Some(end) = end_time {
                                             if Instant::now() >= end {
-                                                warn!("Worker {} stopping reconnection attempts - time expired", i);
+                                                warn!(
+                                                    "Worker {} stopping reconnection attempts - time expired",
+                                                    i
+                                                );
                                                 return; // Exit the worker completely
                                             }
                                         }
@@ -426,6 +441,11 @@ async fn send_messages(cfg: Config) -> Result<()> {
                             }
                         }
                         msg_index += 1;
+
+                        // Throttle to the configured message rate
+                        if let Some(delay) = per_worker_delay {
+                            tokio::time::sleep(delay).await;
+                        }
                     }
                 }
                 SendMode::Single => {
@@ -439,21 +459,32 @@ async fn send_messages(cfg: Config) -> Result<()> {
                                         Arc::clone(&stats_clone),
                                         to_send_msg.to_string(),
                                         &mut transport,
-                                    ).await;
+                                    )
+                                    .await;
 
-                                    let error_msg = send_result.as_ref().err().map(|e| e.to_string());
+                                    let error_msg =
+                                        send_result.as_ref().err().map(|e| e.to_string());
                                     (send_result.is_ok(), error_msg)
                                 }; // send_result is dropped here
 
                                 if success {
                                     sent = true;
+                                    // Throttle to the configured message rate
+                                    if let Some(delay) = per_worker_delay {
+                                        tokio::time::sleep(delay).await;
+                                    }
                                 } else {
                                     if let Some(msg) = error_msg {
                                         error!("Worker {} failed to send message: {}", i, msg);
                                     }
                                     // Try to reconnect
                                     tokio::time::sleep(Duration::from_millis(100)).await;
-                                    match TcpStream::connect(format!("{}:{}", cfg_clone.host, cfg_clone.port)).await {
+                                    match TcpStream::connect(format!(
+                                        "{}:{}",
+                                        cfg_clone.host, cfg_clone.port
+                                    ))
+                                    .await
+                                    {
                                         Ok(s) => {
                                             transport = Framed::new(s, MllpCodec::new());
                                             let mut stats = stats_clone.lock().await;
@@ -461,7 +492,10 @@ async fn send_messages(cfg: Config) -> Result<()> {
                                             info!("Worker {} reconnected successfully", i);
                                         }
                                         Err(reconnect_err) => {
-                                            error!("Worker {} failed to reconnect, retrying: {}", i, reconnect_err);
+                                            error!(
+                                                "Worker {} failed to reconnect, retrying: {}",
+                                                i, reconnect_err
+                                            );
                                         }
                                     }
                                 }
@@ -470,8 +504,6 @@ async fn send_messages(cfg: Config) -> Result<()> {
                     }
                 }
                 SendMode::SetAmount => {
-                    // Todo: implement set amount mode
-                    warn!("SetAmount mode not yet implemented, using Single mode");
                     for (idx, to_send_msg) in msg_clone.iter().enumerate() {
                         if idx % amount_workers == i {
                             let mut sent = false;
@@ -481,21 +513,32 @@ async fn send_messages(cfg: Config) -> Result<()> {
                                         Arc::clone(&stats_clone),
                                         to_send_msg.to_string(),
                                         &mut transport,
-                                    ).await;
+                                    )
+                                    .await;
 
-                                    let error_msg = send_result.as_ref().err().map(|e| e.to_string());
+                                    let error_msg =
+                                        send_result.as_ref().err().map(|e| e.to_string());
                                     (send_result.is_ok(), error_msg)
                                 }; // send_result is dropped here
 
                                 if success {
                                     sent = true;
+                                    // Throttle to the configured message rate
+                                    if let Some(delay) = per_worker_delay {
+                                        tokio::time::sleep(delay).await;
+                                    }
                                 } else {
                                     if let Some(msg) = error_msg {
                                         error!("Worker {} failed to send message: {}", i, msg);
                                     }
                                     // Try to reconnect
                                     tokio::time::sleep(Duration::from_millis(100)).await;
-                                    match TcpStream::connect(format!("{}:{}", cfg_clone.host, cfg_clone.port)).await {
+                                    match TcpStream::connect(format!(
+                                        "{}:{}",
+                                        cfg_clone.host, cfg_clone.port
+                                    ))
+                                    .await
+                                    {
                                         Ok(s) => {
                                             transport = Framed::new(s, MllpCodec::new());
                                             let mut stats = stats_clone.lock().await;
@@ -503,7 +546,10 @@ async fn send_messages(cfg: Config) -> Result<()> {
                                             info!("Worker {} reconnected successfully", i);
                                         }
                                         Err(reconnect_err) => {
-                                            error!("Worker {} failed to reconnect, retrying: {}", i, reconnect_err);
+                                            error!(
+                                                "Worker {} failed to reconnect, retrying: {}",
+                                                i, reconnect_err
+                                            );
                                         }
                                     }
                                 }
@@ -591,36 +637,30 @@ async fn send_message(
             )
             .into())
         }
-        Ok(resp_ok) => {
-            match resp_ok {
-                Some(Ok(_msg)) => {
-                    info!("Received response from server");
-                    let mut stats = stats.lock().await;
-                    stats.messages_sent += 1;
-                    stats.bytes_sent += _msg.len() as u64;
-                    stats.last_update = Instant::now();
-                    Ok(())
-                }
-                Some(Err(e)) => {
-                    info!("Error receiving response from server: {}", e);
-                    let mut stats = stats.lock().await;
-                    stats.messages_failed += 1;
-                    stats.last_update = Instant::now();
-                    Err(e.into())
-                }
-                None => {
-                    info!("No response from server");
-                    let mut stats = stats.lock().await;
-                    stats.messages_failed += 1;
-                    stats.last_update = Instant::now();
-                    Err(std::io::Error::new(
-                        ErrorKind::TimedOut,
-                        "No response from remote host",
-                    )
-                    .into())
-                }
+        Ok(resp_ok) => match resp_ok {
+            Some(Ok(_msg)) => {
+                info!("Received response from server");
+                let mut stats = stats.lock().await;
+                stats.messages_sent += 1;
+                stats.bytes_sent += _msg.len() as u64;
+                stats.last_update = Instant::now();
+                Ok(())
             }
-        }
+            Some(Err(e)) => {
+                info!("Error receiving response from server: {}", e);
+                let mut stats = stats.lock().await;
+                stats.messages_failed += 1;
+                stats.last_update = Instant::now();
+                Err(e.into())
+            }
+            None => {
+                info!("No response from server");
+                let mut stats = stats.lock().await;
+                stats.messages_failed += 1;
+                stats.last_update = Instant::now();
+                Err(std::io::Error::new(ErrorKind::TimedOut, "No response from remote host").into())
+            }
+        },
     }
 }
 
@@ -643,8 +683,8 @@ fn show_config(cfg: Config) {
         format!("{:?}", cfg.connection_type).yellow()
     );
     println!(
-        "   {:<15} {}", 
-        "Send mode".green(), 
+        "   {:<15} {}",
+        "Send mode".green(),
         format!("{:?}", cfg.send_mode).yellow()
     );
     println!(
@@ -652,7 +692,12 @@ fn show_config(cfg: Config) {
         "Send time (sec):".green(),
         cfg.send_time.to_string().yellow()
     );
-    
+    println!(
+        "   {:<15} {}",
+        "Message rate:".green(),
+        format!("{} msg/s", cfg.message_rate).yellow()
+    );
+
     println!();
 
     println!("{}", "🚛 Payload:".blue().bold());
